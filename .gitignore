@@ -3,3 +3,5 @@
 Workdir/
 
 cmake-build-debug/
+
+.gitignore
