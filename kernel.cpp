@@ -411,7 +411,7 @@ void calculator_kernel(const std::string& input) {
     const std::string& command = words[0];
 
     if (command == "help") {
-        // std::cout << "do help" << std::endl;
+        std::cout << "generating document..." << std::endl;
         if (words.size() > 1) {
             document(words[1]);
         }
