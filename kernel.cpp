@@ -18,6 +18,7 @@
 
 std::vector<Variable> var_list;
 std::vector<Function *> fun_list;
+std::vector<std::pair<std::string, Matrix>> matrix_list;
 
 M_Log logger;
 
@@ -33,7 +34,10 @@ enum TokenType {
     TK_VAR,
     TK_CMA,
     TK_EQL,
+    TK_LSB,
+    TK_RSB,
     TK_FUN = 256,
+    TK_MAT,
 };
 
 struct Token {
@@ -52,6 +56,8 @@ std::unordered_map<std::string, std::function<void(std::vector<std::string> &)>>
     {"calc", p_calc},
     {"show", p_show},
     {"save", p_save},
+    {"matrix", matrix_create},
+    {"mcalc",p_mcalc},
 };
 
 std::unordered_map<std::string, double> constants = {
@@ -63,8 +69,28 @@ class Expression {
 public:
     std::string expr;
     std::vector<Token> tokens;
+
+    size_t pos;
+    std::vector<std::regex> patterns;
+
     Node *root = new Node();
-    explicit Expression(std::string _expr): expr(_expr){}
+
+    explicit Expression(std::string _expr): expr(_expr), pos(0){
+        patterns = {
+            std::regex("\\+"), // 加号
+            std::regex("\\-"), // 减号
+            std::regex("\\*"), // 乘号
+            std::regex("\\/"), // 除号
+            std::regex("\\("), // 左括号
+            std::regex("\\)"), // 右括号
+            std::regex("[0-9]+"), // 数字
+            std::regex("\\."),
+            std::regex("[a-zA-Z]+[0-9]*"),
+            std::regex("\\,"),
+            std::regex("\\="),
+            std::regex("\\["),
+            std::regex("\\]"),
+        };}
     static bool check_parentheses(int p, int q, std::vector<Token>& tks){
         if(tks[p].type != TK_LBR || tks[q].type != TK_RBR){
             return false;
@@ -138,6 +164,54 @@ public:
             }
         }
     }
+    bool parse() {
+        while (pos < expr.length()) {
+            bool matched = false;
+            for (size_t i = 0; i < patterns.size(); ++i) {
+                std::smatch match;
+                // 使用正则表达式匹配
+                if (std::regex_search(expr.cbegin() + pos, expr.cend(), match, patterns[i], std::regex_constants::match_continuous)) {
+                    Token token;
+                    token.str = match.str(0);
+
+                    // 根据正则表达式的顺序分配类型
+                    if (i == TK_ADD) token.type = TK_ADD;     // 加号
+                    else if (i == TK_SUB) token.type = TK_SUB; // 减号
+                    else if (i == TK_MUL) token.type = TK_MUL; // 乘号
+                    else if (i == TK_DIV) token.type = TK_DIV; // 除号
+                    else if (i == TK_LBR) token.type = TK_LBR; // 左括号
+                    else if (i == TK_RBR) token.type = TK_RBR; // 右括号
+                    else if (i == TK_NUM) token.type = TK_NUM; // 数字
+                    else if (i == TK_DOT) token.type = TK_DOT;
+                    else if (i == TK_VAR) token.type = TK_VAR;
+                    else if (i == TK_CMA) token.type = TK_CMA;
+                    else if (i == TK_EQL) token.type = TK_EQL;
+                    else if (i == TK_LSB) token.type = TK_LSB;
+                    else if (i == TK_RSB) token.type = TK_RSB;
+                    else {
+                        break;
+                    }
+
+                    tokens.push_back(token);
+                    pos += match.length();  // 更新 pos，继续从新的位置查找
+                    matched = true;
+                    break;
+                }
+            }
+
+            if (!matched) {
+                std::cerr << "Unable to parse the expression at position " << pos << ": " << expr.substr(pos) << std::endl;
+                return false;
+            }
+        }
+
+        return true;
+    }
+    void printTokens() const {
+        for (const auto& token : tokens) {
+            std::cout << "Token: " << token.str << ", Type: " << token.type << std::endl;
+        }
+    }
     static void to_dot(const Node* node, std::ostream& os, int& counter) {
         if (node == nullptr) return;
 
@@ -155,8 +229,6 @@ public:
             to_dot(child, os, counter);  // 递归遍历子节点
         }
     }
-
-    // 导出为 DOT 格式的完整字符串
     std::string to_dot() const {
         std::ostringstream oss;
         oss << "digraph G {\n";  // 开始图的定义
@@ -252,26 +324,11 @@ private:
 
 class ExpressionParser : public Expression{
 public:
-    size_t pos;
-    std::vector<std::regex> patterns;
-
     double expr_val;
 
-    explicit ExpressionParser(std::string  expr) : Expression(expr), pos(0), expr_val(0) {
+    explicit ExpressionParser(std::string  expr) : Expression(expr),expr_val(0) {
         // 初始化正则表达式模式，按优先级顺序
-        patterns = {
-            std::regex("\\+"), // 加号
-            std::regex("\\-"), // 减号
-            std::regex("\\*"), // 乘号
-            std::regex("\\/"), // 除号
-            std::regex("\\("), // 左括号
-            std::regex("\\)"), // 右括号
-            std::regex("[0-9]+"), // 数字
-            std::regex("\\."),
-            std::regex("[a-zA-Z]+[0-9]*"),
-            std::regex("\\,"),
-            std::regex("\\="),
-        };
+
     }
 
     static void calc_tree(Node * node) {
@@ -340,54 +397,50 @@ public:
         }
     }
 
-    bool parse() {
-        while (pos < expr.length()) {
-            bool matched = false;
-            for (size_t i = 0; i < patterns.size(); ++i) {
-                std::smatch match;
-                // 使用正则表达式匹配
-                if (std::regex_search(expr.cbegin() + pos, expr.cend(), match, patterns[i], std::regex_constants::match_continuous)) {
-                    Token token;
-                    token.str = match.str(0);
-
-                    // 根据正则表达式的顺序分配类型
-                    if (i == TK_ADD) token.type = TK_ADD;     // 加号
-                    else if (i == TK_SUB) token.type = TK_SUB; // 减号
-                    else if (i == TK_MUL) token.type = TK_MUL; // 乘号
-                    else if (i == TK_DIV) token.type = TK_DIV; // 除号
-                    else if (i == TK_LBR) token.type = TK_LBR; // 左括号
-                    else if (i == TK_RBR) token.type = TK_RBR; // 右括号
-                    else if (i == TK_NUM) token.type = TK_NUM; // 数字
-                    else if (i == TK_DOT) token.type = TK_DOT;
-                    else if (i == TK_VAR) token.type = TK_VAR;
-                    else if (i == TK_CMA) token.type = TK_CMA;
-                    else if (i == TK_EQL) token.type = TK_EQL;
-                    else {
-                        break;
-                    }
-
-                    tokens.push_back(token);
-                    pos += match.length();  // 更新 pos，继续从新的位置查找
-                    matched = true;
-                    break;
-                }
-            }
-
-            if (!matched) {
-                std::cerr << "Unable to parse the expression at position " << pos << ": " << expr.substr(pos) << std::endl;
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    void printTokens() const {
-        for (const auto& token : tokens) {
-            std::cout << "Token: " << token.str << ", Type: " << token.type << std::endl;
-        }
-    }
 };
+
+
+void matrix_create(std::vector<std::string> &words) {
+    std::vector<std::vector<double>> init;
+
+    words.erase(words.begin());
+    std::string expr;
+    for (auto & word : words) {
+        expr += word;
+    }
+    ExpressionParser parser(expr);
+
+    parser.parse();
+    // parser.printTokens();
+
+    for (int i = 3; i < parser.tokens.size() - 1; i++) {
+        if (parser.tokens[i].type == TK_LSB) {
+            std::vector<double> line;
+            while (parser.tokens[i].type != TK_RSB) {
+                if (parser.tokens[i].type == TK_NUM) {
+                    line.push_back(std::stod(parser.tokens[i].str));
+                }
+                i++;
+            }
+            init.push_back(line);
+        }
+    }
+
+    Matrix matrix(init.size(), init[0].size(), init);
+
+    matrix_list.emplace_back(parser.tokens[0].str, matrix);
+    // matrix.print();
+
+    std::vector<std::string> log;
+    log.emplace_back("Matrix create");
+    std::string info = "Store matrix " + parser.tokens[0].str;
+    log.push_back(info);
+    std::string res = "Success. Size: " + std::to_string(matrix.getRow()) + "x" +std::to_string(matrix.getColumn());
+    log.push_back(res);
+    logger.log_add(log);
+
+
+}
 
 std::vector<std::string> split_string_by_space(const std::string& str) {
     std::vector<std::string> result;
@@ -411,7 +464,6 @@ void calculator_kernel(const std::string& input) {
     const std::string& command = words[0];
 
     if (command == "help") {
-        std::cout << "generating document..." << std::endl;
         if (words.size() > 1) {
             document(words[1]);
         }
@@ -429,6 +481,7 @@ void calculator_kernel(const std::string& input) {
     else {
         functionMap[command](words);
     }
+
 
 }
 
@@ -504,6 +557,202 @@ double calc_function(std::string fname, std::vector<double> var) {
     }
 
     return 0;
+}
+
+void p_mcalc(std::vector<std::string> &words) {
+    words.erase(words.begin());
+    std::string expr;
+    for (auto & word : words) {
+        expr += word;
+    }
+    ExpressionParser parser(expr);
+    parser.parse();
+
+    // parser.printTokens();
+    std::vector<Token> & tokens = parser.tokens;
+
+    std::vector<std::string> log;
+    log.push_back("Matrix Calculation");
+    log.push_back(expr);
+
+    if (tokens.size() == 4) {
+        if (tokens[0].str == "det") {
+            double res = 0;
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[2].str) {
+                    res = snd.determinant();
+                }
+            }
+            std::cout << res << std::endl;
+            log.push_back(std::to_string(res));
+        }
+        else if (tokens[0].str == "T") {
+
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[2].str) {
+                    Matrix m = snd.T();
+                    std::string content = fst + "_Transpose";
+                    matrix_list.emplace_back(content, m);
+                    m.print();
+                    log.push_back("Saved as " + content);
+                }
+            }
+        }
+        else if (tokens[0].str == "inverse") {
+
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[2].str) {
+                    Matrix m = snd.inverse();
+                    std::string content = fst + "_Inverse";
+                    matrix_list.emplace_back(content, m);
+                    m.print();
+                    log.push_back("Saved as " + content);
+                }
+            }
+        }
+
+    }
+    else if (tokens.size() == 3) {
+        if (tokens[1].type == TK_ADD) {
+            Matrix *x1 = nullptr;
+            Matrix *x2 = nullptr;
+            std::string res;
+            for (auto & matrix: matrix_list) {
+                if (matrix.first == tokens[0].str) {
+                    x1 = &matrix.second;
+                    res = matrix.first + "+";
+                }
+            }
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[2].str) {
+                    x2 = &snd;
+                    res += fst;
+                }
+            }
+            if (x1 == nullptr || x2 == nullptr) {
+                std::cout << "Invalid expression." << std::endl;
+                return ;
+            }
+            Matrix m = *x1 + *x2;
+
+            m.print();
+            matrix_list.emplace_back(res,m);
+            log.push_back("Saved as " + res);
+        }
+        else if (tokens[1].type == TK_SUB) {
+            Matrix *x1 = nullptr;
+            Matrix *x2 = nullptr;
+            std::string res;
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[0].str) {
+                    x1 = &snd;
+                    res += fst;
+                    res += "-";
+                }
+            }
+            for (auto &[fst, snd]: matrix_list) {
+                if (fst == tokens[2].str) {
+                    x2 = &snd;
+                    res += fst;
+                }
+            }
+            if (x1 == nullptr || x2 == nullptr) {
+                std::cout << "Invalid expression." << std::endl;
+                return ;
+            }
+            Matrix m = *x1 - *x2;
+
+            m.print();
+            matrix_list.emplace_back(res,m);
+            log.push_back("Saved as " + res);
+        }
+        else if (tokens[1].type == TK_MUL) {
+            std::string res;
+            if (tokens[0].type == TK_NUM) {
+                Matrix *x1 = nullptr;
+                res += tokens[0].str;
+                res += "*";
+                for (auto & matrix: matrix_list) {
+                    if (matrix.first == tokens[2].str) {
+                        x1 = &matrix.second;
+                        res += matrix.first;
+                    }
+                }
+                if (x1 == nullptr) {
+                    std::cout << "Invalid expression." << std::endl;
+                    return ;
+                }
+                Matrix m = *x1 * std::stod(tokens[0].str);
+
+                m.print();
+                matrix_list.emplace_back(res,m);
+                log.push_back("Saved as " + res);
+
+            }
+            else if (tokens[2].type == TK_NUM) {
+                Matrix *x1 = nullptr;
+                res += tokens[2].str;
+                res += "*";
+                for (auto & matrix: matrix_list) {
+                    if (matrix.first == tokens[0].str) {
+                        x1 = &matrix.second;
+                        res += matrix.first;
+                    }
+                }
+                if (x1 == nullptr) {
+                    std::cout << "Invalid expression." << std::endl;
+                    return ;
+                }
+                Matrix m = *x1 * std::stod(tokens[2].str);
+
+                m.print();
+                matrix_list.emplace_back(res,m);
+                log.push_back("Saved as " + res);
+
+            }
+            else {
+                Matrix *x1 = nullptr;
+                Matrix *x2 = nullptr;
+                for (auto &[fst, snd]: matrix_list) {
+                    if (fst == tokens[0].str) {
+                        x1 = &snd;
+                        res += fst;
+                        res += "*";
+                    }
+                }
+                for (auto &[fst, snd]: matrix_list) {
+                    if (fst == tokens[2].str) {
+                        x2 = &snd;
+                        res += fst;
+                    }
+                }
+                if (x1 == nullptr || x2 == nullptr) {
+                    std::cout << "Invalid expression." << std::endl;
+                    return ;
+                }
+                Matrix m = *x1 * *x2;
+
+                m.print();
+                matrix_list.emplace_back(res,m);
+                log.push_back("Saved as " + res);
+
+            }
+        }
+        else if (tokens[1].type == TK_DIV) {
+            std::cout << "Suggest not using division, use multiply instead (/2 can be x0.5)" << std::endl;
+            log.push_back("Suggest multiply");
+        }
+    }
+
+    logger.log_add(log);
+
+    // Matrix *x1, *x2;
+    // for (auto & m : matrix_list) {
+    //     if (m.first == words[1]) {
+    //
+    //     }
+    // }
+
 }
 
 void p_calc(std::vector<std::string> & words) {
@@ -633,8 +882,6 @@ void p_assign(std::vector<std::string> & words) {
 
     }
 
-
-
 }
 
 void show_function() {
@@ -664,12 +911,23 @@ void show_variable() {
     }
 }
 
+void show_matrix() {
+    for (auto & m : matrix_list) {
+        std::cout << m.first << " ";
+        m.second.print();
+        std::cout << std::endl;;
+    }
+}
+
 void p_show(std::vector<std::string> &words) {
     if (words[1] == "fun") {
         show_function();
     }
     else if (words[1] == "var") {
         show_variable();
+    }
+    else if (words[1] == "matrix") {
+        show_matrix();
     }
     else if (words[1] == "log") {
         logger.show_log();

@@ -18,6 +18,7 @@
 #include "Log.h"
 #include "help.h"
 #include "Information.h"
+#include "LAlgebra.h"
 
 class Variable;
 class Function;
@@ -28,6 +29,8 @@ void p_calc(std::vector<std::string> & words);
 void p_assign(std::vector<std::string> & words);
 void p_show(std::vector<std::string> & words);
 void p_save(std::vector<std::string> & words);
+void p_mcalc(std::vector<std::string> & words);
+void matrix_create(std::vector<std::string> & words);
 double calc_function(std::string, std::vector<double> var);
 
 #endif //KERNEL_H

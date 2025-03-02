@@ -5,6 +5,6 @@
 #ifndef INFORMATION_H
 #define INFORMATION_H
 
-#define VERSION "0.1.0"
+#define VERSION "0.1.1"
 
 #endif //INFORMATION_H

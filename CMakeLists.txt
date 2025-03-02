@@ -16,4 +16,6 @@ add_executable(Calculator main.cpp
         help.cpp
         include/help.h
         include/Information.h
+        LAlgebra.cpp
+        include/LAlgebra.h
 )
