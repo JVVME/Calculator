@@ -20,10 +20,13 @@
 #include "Information.h"
 #include "LAlgebra.h"
 
+struct Token;
 class Variable;
 class Function;
 
 void calculator_kernel(const std::string& input);
+
+void preprocess(std::vector<Token>& tokens);
 
 void p_calc(std::vector<std::string> & words);
 void p_assign(std::vector<std::string> & words);

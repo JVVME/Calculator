@@ -12,7 +12,8 @@
 #include <iomanip>
 
 #define IS_NEG (tokens[i].type == TK_SUB && (i == 0 || tokens[i - 1].type == TK_ADD || tokens[i - 1].type == TK_SUB \
- || tokens[i - 1].type == TK_MUL || tokens[i - 1].type == TK_DIV || tokens[i - 1].type == TK_LBR))
+ || tokens[i - 1].type == TK_MUL || tokens[i - 1].type == TK_DIV || tokens[i - 1].type == TK_LBR \
+ || tokens[i - 1].type == TK_CMA || tokens[i - 1].type == TK_LSB))
 #define IS_FLOAT (i > 0 && tokens[i].type == TK_DOT && tokens[i - 1].type == TK_NUM && tokens[i + 1].type == TK_NUM)
 #define IS_FUNCTION (tokens[i].type == TK_VAR && tokens[i + 1].type == TK_LBR)
 
@@ -110,60 +111,78 @@ public:
         return (count == 0);
     }
     void create_tree(int p, int q, Node* node) {
-        // std::cout << p << " " << q << std::endl;
-        if (p > q) return;
-        if (p == q) {
-            // std::cout << "write " << p << std::endl;
-            node->token = &tokens[p]; // 叶子节点
-            return;
-        }
+    if (p > q) return;
+    if (p == q) {
+        node->token = &tokens[p];
+        return;
+    }
 
-        // 处理括号
-        if (check_parentheses(p, q, tokens)) {
-            p++;
-            q--;
-        }
+    // 处理括号包裹的情况
+    if (check_parentheses(p, q, tokens)) {
+        return create_tree(p + 1, q - 1, node);
+    }
 
-        // 处理函数的情况
-        if (tokens[p].type == TK_FUN && check_parentheses(p + 1, q, tokens)) {
-            node->token = &tokens[p];
-            int cnt = 1;
-            int begin = p + 2;
-            int end = p + 3;
-            while (end <= q) {
-                if (tokens[end].type == TK_RBR) cnt--;
-                else if (tokens[end].type == TK_LBR) cnt++;
-                else if (tokens[end].type == TK_CMA && cnt == 1) {
-                    Node *node1 = new Node();
-                    node->children.emplace_back(node1);
-                    create_tree(begin, end - 1, node1);
-                    begin = end + 1;
-                }
-                end++;
+    // 优先处理函数调用
+    if (tokens[p].type == TK_FUN) {
+        node->token = &tokens[p];
+        int bracket_cnt = 1;
+        int param_start = p + 2; // 跳过函数名和左括号
+        int current_pos = p + 2;
+
+        while (current_pos <= q) {
+            if (tokens[current_pos].type == TK_LBR) bracket_cnt++;
+            else if (tokens[current_pos].type == TK_RBR) bracket_cnt--;
+            else if (tokens[current_pos].type == TK_CMA && bracket_cnt == 1) {
+                Node* param_node = new Node();
+                node->children.push_back(param_node);
+                create_tree(param_start, current_pos - 1, param_node);
+                param_start = current_pos + 1;
             }
-            Node *node1 = new Node();
-            node->children.emplace_back(node1);
-            create_tree(begin, end - 2, node1);
+
+            if (bracket_cnt == 0) break;
+            current_pos++;
         }
 
-        // 根据操作符进行分割
-        int cnt = 0;
-        for (int i = p; i <= q; i++) {
-            if (tokens[i].type == TK_LBR) cnt++;
-            else if (tokens[i].type == TK_RBR) cnt--;
-            if (cnt == 0 && (tokens[i].type == TK_ADD || tokens[i].type == TK_SUB || tokens[i].type == TK_MUL || tokens[i].type == TK_DIV)) {
+        // 处理最后一个参数
+        if (param_start <= current_pos - 1) {
+            Node* param_node = new Node();
+            node->children.push_back(param_node);
+            create_tree(param_start, current_pos - 1, param_node);
+        }
+        return;
+    }
+
+    // 运算符优先级处理（从低到高扫描）
+    const std::vector<std::vector<TokenType>> priority_groups = {
+        {TK_ADD, TK_SUB},  // 最低优先级
+        {TK_MUL, TK_DIV}   // 较高优先级
+    };
+
+    for (auto& group : priority_groups) {
+        int bracket_cnt = 0;
+        // 从右向左查找运算符（保证右结合性）
+        for (int i = q; i >= p; i--) {
+            if (tokens[i].type == TK_RBR) bracket_cnt++;
+            else if (tokens[i].type == TK_LBR) bracket_cnt--;
+
+            if (bracket_cnt == 0 &&
+                std::find(group.begin(), group.end(), tokens[i].type) != group.end()) {
                 node->token = &tokens[i];
-                Node *node1 = new Node();
-                Node *node2 = new Node();
-                node->children.emplace_back(node1);
-                node->children.emplace_back(node2);
-                // std::cout << p << " " << i << " " << q << std::endl;
-                create_tree(p, i - 1, node1); // 递归左子树
-                create_tree(i + 1, q, node2); // 递归右子树
-                break;
+                Node* left = new Node();
+                Node* right = new Node();
+                node->children.push_back(left);
+                node->children.push_back(right);
+                create_tree(p, i - 1, left);
+                create_tree(i + 1, q, right);
+                return;
             }
         }
     }
+
+    // 如果没有找到运算符，可能是单操作数情况
+    node->token = &tokens[p];
+}
+
     bool parse() {
         while (pos < expr.length()) {
             bool matched = false;
@@ -254,7 +273,6 @@ public:
     }
 
     double function_val(std::vector<double>& var) {
-        // std::cout << "Hello1" << std::endl;
         calc_val(root, var);
         return root->value;
     }
@@ -267,10 +285,8 @@ private:
                 node->value = std::stod(node->token->str);
             }
             else if (node->token->type == TK_VAR) {
-                // std::cout << "check var" <<std::endl;
                 for (int i = 0; i < f_var.size(); i++) {
                     if (f_var[i] == node->token->str) {
-                        // std::cout << "set to " << tmp_var[i] << std::endl;
                         node->value = tmp_var[i];
                     }
                 }
@@ -327,7 +343,6 @@ public:
     double expr_val;
 
     explicit ExpressionParser(std::string  expr) : Expression(expr),expr_val(0) {
-        // 初始化正则表达式模式，按优先级顺序
 
     }
 
@@ -411,13 +426,18 @@ void matrix_create(std::vector<std::string> &words) {
     ExpressionParser parser(expr);
 
     parser.parse();
+
     // parser.printTokens();
+    preprocess(parser.tokens);
+    // parser.printTokens();
+
 
     for (int i = 3; i < parser.tokens.size() - 1; i++) {
         if (parser.tokens[i].type == TK_LSB) {
             std::vector<double> line;
             while (parser.tokens[i].type != TK_RSB) {
                 if (parser.tokens[i].type == TK_NUM) {
+                    // std::cout << "pushed " << std::stod(parser.tokens[i].str) << std::endl;
                     line.push_back(std::stod(parser.tokens[i].str));
                 }
                 i++;
@@ -428,8 +448,9 @@ void matrix_create(std::vector<std::string> &words) {
 
     Matrix matrix(init.size(), init[0].size(), init);
 
-    matrix_list.emplace_back(parser.tokens[0].str, matrix);
     // matrix.print();
+
+    matrix_list.emplace_back(parser.tokens[0].str, matrix);
 
     std::vector<std::string> log;
     log.emplace_back("Matrix create");
@@ -568,7 +589,6 @@ void p_mcalc(std::vector<std::string> &words) {
     ExpressionParser parser(expr);
     parser.parse();
 
-    // parser.printTokens();
     std::vector<Token> & tokens = parser.tokens;
 
     std::vector<std::string> log;
@@ -746,13 +766,6 @@ void p_mcalc(std::vector<std::string> &words) {
 
     logger.log_add(log);
 
-    // Matrix *x1, *x2;
-    // for (auto & m : matrix_list) {
-    //     if (m.first == words[1]) {
-    //
-    //     }
-    // }
-
 }
 
 void p_calc(std::vector<std::string> & words) {
@@ -762,13 +775,10 @@ void p_calc(std::vector<std::string> & words) {
     for (auto & word : words) {
         expr += word;
     }
-    // std::cout << expr << std::endl;
 
     ExpressionParser parser(expr);
 
-    if ( parser.parse()) {
-        // parser.printTokens();
-    } else {
+    if (!parser.parse()){
         std::cerr << "Failed to parse the expression." << std::endl;
         return ;
     }
@@ -776,20 +786,7 @@ void p_calc(std::vector<std::string> & words) {
     std::vector<Token>& tokens = parser.tokens;
     preprocess(tokens);
 
-    // parser.printTokens();
-
     parser.create_tree(0, tokens.size() - 1, parser.root);
-
-    // std::string dot_output = parser.to_dot();
-
-    // 如果要将输出写入文件
-    // std::ofstream dot_file("../tree.dot");
-    // std::cout << "output" <<std::endl;
-    // dot_file << dot_output;
-    // dot_file.close();
-
-    // parser.print_tree(*parser.root);
-    // std::cout << parser.expr << std::endl;
 
     parser.calc_tree(parser.root);
 
@@ -805,7 +802,6 @@ void p_calc(std::vector<std::string> & words) {
 }
 
 void p_assign(std::vector<std::string> & words) {
-    // std::cout << "assign called" << std::endl;
     std::string expr;
     for (auto & word : words) {
         expr += word;
@@ -813,7 +809,6 @@ void p_assign(std::vector<std::string> & words) {
     ExpressionParser parser(expr);
 
     if ( parser.parse()) {
-        // parser.printTokens();
         preprocess(parser.tokens);
     } else {
         std::cout << "Failed to parse the expression" << std::endl;
@@ -823,7 +818,6 @@ void p_assign(std::vector<std::string> & words) {
     if (parser.tokens[0].type == TK_VAR) {
         Variable var(parser.tokens[0].str, std::stod(parser.tokens[2].str));
         var_list.push_back(var);
-        // std::cout << "Success saved variable  " << var.name << ": " << var.value <<std::endl;
         std::vector<std::string> res;
         res.push_back("Assign Variable");
         res.push_back(parser.expr);
@@ -870,15 +864,6 @@ void p_assign(std::vector<std::string> & words) {
         res.push_back("Success");
 
         logger.log_add(res);
-
-        // std::cout << fc->expr << std::endl;
-
-        // std::string dot_output = parser.to_dot();
-        // std::ofstream dot_file("../tree.dot");
-        // std::cout << "output" <<std::endl;
-        // dot_file << dot_output;
-        // dot_file.close();
-
 
     }
 
